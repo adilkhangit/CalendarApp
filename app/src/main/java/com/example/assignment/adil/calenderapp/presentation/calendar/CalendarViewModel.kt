@@ -4,7 +4,9 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.assignment.adil.calenderapp.data.api.TaskDetail
 import com.example.assignment.adil.calenderapp.data.api.TaskModel
+import com.example.assignment.adil.calenderapp.data.repository.CalendarRepositoryException
 import com.example.assignment.adil.calenderapp.domain.repository.CalendarRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,7 +16,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.YearMonth
 import javax.inject.Inject
-
 
 @HiltViewModel
 class CalendarViewModel @Inject constructor(
@@ -30,7 +31,6 @@ class CalendarViewModel @Inject constructor(
         loadTasks()
     }
 
-    
     fun onIntent(intent: CalendarIntent) {
         when (intent) {
             is CalendarIntent.LoadTasks -> loadTasks()
@@ -42,92 +42,80 @@ class CalendarViewModel @Inject constructor(
         }
     }
 
-    
     private fun loadTasks() {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null) }
             try {
+                _state.update { it.copy(isLoading = true, error = null) }
                 repository.getTaskList(userId).collect { tasks ->
-                    _state.update {
-                        it.copy(
-                            tasks = tasks,
-                            isLoading = false,
-                            error = null,
-                            lastSyncTime = System.currentTimeMillis()
-                        )
-                    }
+                    _state.update { it.copy(tasks = tasks, isLoading = false) }
                 }
+            } catch (e: CalendarRepositoryException) {
+                _state.update { it.copy(isLoading = false, error = e.message) }
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false, error = "Failed to load tasks: ${e.message}"
-                    )
-                }
+                _state.update { it.copy(isLoading = false, error = "An unexpected error occurred") }
             }
         }
     }
 
-    
     private fun addTask(userId: Int, task: TaskModel) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null) }
-
             try {
-                if (task.title.isBlank()) {
-                    throw Exception("Task title cannot be empty")
-                }
-                if (task.date.isBlank()) {
-                    throw Exception("Task date cannot be empty")
-                }
+                _state.update { it.copy(isLoading = true, error = null) }
                 repository.addTask(userId, task)
-                loadTasks()
+                loadTasks() // Refresh the task list
+            } catch (e: CalendarRepositoryException) {
+                _state.update { it.copy(isLoading = false, error = e.message) }
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false, error = "Failed to add task: ${e.message}"
-                    )
-                }
+                _state.update { it.copy(isLoading = false, error = "Failed to add task") }
             }
         }
     }
 
-    
     private fun deleteTask(userId: Int, taskId: Int) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null) }
             try {
-                repository.deleteTask(userId, taskId)
-                loadTasks()
-            } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false, error = "Failed to delete task: ${e.message}"
-                    )
+                _state.update { it.copy(isLoading = true, error = null) }
+                val result = repository.deleteTask(userId, taskId)
+                if (result.isSuccess) {
+                    loadTasks() // Refresh the task list
+                } else {
+                    _state.update { it.copy(isLoading = false, error = result.exceptionOrNull()?.message) }
                 }
+            } catch (e: CalendarRepositoryException) {
+                _state.update { it.copy(isLoading = false, error = e.message) }
+            } catch (e: Exception) {
+                _state.update { it.copy(isLoading = false, error = "Failed to delete task") }
             }
         }
+    }
+
+    private fun changeMonth(yearMonth: YearMonth) {
+        _state.update { it.copy(selectedYearMonth = yearMonth) }
     }
 
     private fun syncTasks(userId: Int) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null, isSyncing = true) }
             try {
-                repository.syncTasksToServer(userId)
-                loadTasks()
-            } catch (e: Exception) {
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        isSyncing = false,
-                        error = "Failed to sync tasks: ${e.message}"
-                    )
+                _state.update { it.copy(isLoading = true, error = null, isSyncing = true) }
+                val result = repository.syncTasksToServer(userId)
+                if (result.isSuccess) {
+                    loadTasks() // Refresh the task list
+                    _state.update { it.copy(isSyncing = false, lastSyncTime = System.currentTimeMillis()) }
+                } else {
+                    _state.update { 
+                        it.copy(
+                            isLoading = false,
+                            isSyncing = false,
+                            error = result.exceptionOrNull()?.message
+                        )
+                    }
                 }
+            } catch (e: CalendarRepositoryException) {
+                _state.update { it.copy(isLoading = false, isSyncing = false, error = e.message) }
+            } catch (e: Exception) {
+                _state.update { it.copy(isLoading = false, isSyncing = false, error = "Failed to sync tasks") }
             }
         }
-    }
-    
-    private fun changeMonth(yearMonth: YearMonth) {
-        _state.update { it.copy(selectedYearMonth = yearMonth) }
     }
 
     private fun dismissError() {

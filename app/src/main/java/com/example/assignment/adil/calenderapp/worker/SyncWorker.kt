@@ -7,6 +7,7 @@ import androidx.work.Data
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkerParameters
 import com.example.assignment.adil.calenderapp.domain.repository.CalendarRepository
+import com.example.assignment.adil.projectassignment.Utility.NetworkCheck
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -27,6 +28,7 @@ class SyncWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
+            if(!NetworkCheck.isNetworkAvailable(context)) return@withContext Result.failure()
             Log.d(TAG, "Worker started")
             
             val userId = inputData.getLong(KEY_USER_ID, -1)

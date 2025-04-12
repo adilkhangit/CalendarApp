@@ -1,5 +1,6 @@
 package com.example.assignment.adil.calenderapp.data.repository
 
+import android.content.Context
 import com.example.assignment.adil.calenderapp.data.api.CalendarApiService
 import com.example.assignment.adil.calenderapp.data.api.DeleteTaskRequest
 import com.example.assignment.adil.calenderapp.data.api.TaskDetail
@@ -9,9 +10,12 @@ import com.example.assignment.adil.calenderapp.data.api.TaskRequest
 import com.example.assignment.adil.calenderapp.data.local.TaskDao
 import com.example.assignment.adil.calenderapp.data.local.TaskEntity
 import com.example.assignment.adil.calenderapp.domain.repository.CalendarRepository
+import com.example.assignment.adil.projectassignment.Utility.NetworkCheck
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -25,7 +29,8 @@ import kotlin.math.absoluteValue
 class CalendarRepositoryImpl @Inject constructor(
     private val apiService: CalendarApiService,
     private val taskDao: TaskDao,
-    private val coroutineScope: CoroutineScope
+    private val coroutineScope: CoroutineScope,
+    @ApplicationContext private val context: Context
 ) : CalendarRepository {
 
     override suspend fun getTaskList(userId: Int): Flow<List<TaskDetail>> = flow {
@@ -44,6 +49,9 @@ class CalendarRepositoryImpl @Inject constructor(
             throw CalendarRepositoryException("Failed to get task list: ${e.message}", e)
         }
     }.flowOn(Dispatchers.IO)
+        .catch { e ->
+            throw CalendarRepositoryException("Failed to get task list: ${e.message}", e)
+        }
 
     override suspend fun addTask(userId: Int, task: TaskModel): Int = withContext(Dispatchers.IO) {
         try {
@@ -51,6 +59,7 @@ class CalendarRepositoryImpl @Inject constructor(
             val result = taskDao.insertTask(taskEntity).toInt()
             
             // Launch sync in background
+            if (!NetworkCheck.isNetworkAvailable(context)) return@withContext -1
             coroutineScope.launch(Dispatchers.IO) {
                 try {
                     syncTasksToServer(userId)
@@ -67,6 +76,11 @@ class CalendarRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteTask(userId: Int, taskId: Int): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (!NetworkCheck.isNetworkAvailable(context)) {
+            return@withContext Result.failure(
+                CalendarRepositoryException("No internet connection. Cannot sync tasks.")
+            )
+        }
         try {
             val response = apiService.deleteCalendarTask(DeleteTaskRequest(userId, taskId))
             if (response.status == "Success") {
@@ -82,6 +96,11 @@ class CalendarRepositoryImpl @Inject constructor(
 
     override suspend fun syncTasksToServer(userId: Int): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
+            if (!NetworkCheck.isNetworkAvailable(context)) {
+                return@withContext Result.failure(
+                    CalendarRepositoryException("No internet connection. Cannot sync tasks.")
+                )
+            }
             val items = taskDao.getUnsyncedTasksForUser(userId).first()
             
             items.forEach { item ->
@@ -108,10 +127,16 @@ class CalendarRepositoryImpl @Inject constructor(
     }
 
     override suspend fun syncTasksFromServer(userId: Int): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (!NetworkCheck.isNetworkAvailable(context)) {
+            return@withContext Result.failure(
+                CalendarRepositoryException("No internet connection. Cannot sync tasks.")
+            )
+        }
+
         try {
             val response = apiService.getCalendarTaskList(TaskListRequest(userId))
             val remoteTasks = response.tasks ?: emptyList()
-            
+
             val transformedList = remoteTasks.map {
                 TaskEntity.fromTaskModel(
                     userId = userId,
@@ -119,7 +144,7 @@ class CalendarRepositoryImpl @Inject constructor(
                     remoteId = it.task_id,
                 ).copy(isSynced = true)
             }
-            
+
             taskDao.insertTasks(transformedList)
             Result.success(true)
         } catch (e: Exception) {

@@ -6,12 +6,11 @@ import androidx.annotation.RequiresApi
 import com.example.assignment.adil.calenderapp.data.api.TaskDetail
 import java.time.YearMonth
 
-data class CalendarState  constructor(
-    @SuppressLint("NewApi")
-    val selectedYearMonth: YearMonth = YearMonth.now(),
+data class CalendarState(
     val tasks: List<TaskDetail> = emptyList(),
+    val selectedYearMonth: YearMonth = YearMonth.now(),
     val isLoading: Boolean = false,
-    val error: String? = null,
-    val lastSyncTime: Long? = null,
-    val isSyncing: Boolean = false
+    val isSyncing: Boolean = false,
+    val lastSyncTime: Long = 0L,
+    val error: String? = null
 ) 
